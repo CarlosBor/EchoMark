@@ -1,32 +1,58 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-
+import AudioMenuModal from 'components/AudioMenuModal';
+import { TFile } from 'obsidian';
+import { AudioInfo } from 'components/interfaces';
 // Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
 	mySetting: string;
+	anotherSetting: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+	mySetting: 'deft',
+	anotherSetting: 'more deft',
 }
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 
+	getEmbeddedAudio = async () =>{
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		if (!view){
+			new Notice("No active note");
+			return;
+		}
+		const audioInfoArray: AudioInfo[] = [];
+		const file = view.file;
+		const content = await this.app.vault.read(file as TFile);
+		const matches = content.matchAll(/!\[\[(.+?)\]\]/g);
+
+		for (const match of matches) {
+			const link = match[1]; // e.g., "audio.mp3" or "folder/audio.mp3"
+			const tfile = this.app.metadataCache.getFirstLinkpathDest(link, file.path);
+			if (tfile && tfile instanceof TFile && tfile.extension === 'mp3') {
+				const fileName = tfile.name;
+				const src = tfile.path;
+				audioInfoArray.push({ name:fileName, src });
+			}
+		}
+		new AudioMenuModal(this.app, audioInfoArray).open();
+	}
 	async onload() {
 		await this.loadSettings();
 
 		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+		const ribbonIconEl = this.addRibbonIcon('dice', 'TextForButton', (evt: MouseEvent) => {
+			this.getEmbeddedAudio();
 		});
+
 		// Perform additional things with the ribbon
 		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		statusBarItemEl.setText('This text belongs to the test plugin');
 
 		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
@@ -128,6 +154,17 @@ class SampleSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.mySetting)
 				.onChange(async (value) => {
 					this.plugin.settings.mySetting = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Setting #2')
+			.setDesc('It\'s a secret')
+			.addText(text => text
+				.setPlaceholder('Enter your secret')
+				.setValue(this.plugin.settings.anotherSetting)
+				.onChange(async (value) => {
+					this.plugin.settings.anotherSetting = value;
 					await this.plugin.saveSettings();
 				}));
 	}
