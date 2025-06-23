@@ -11,7 +11,6 @@ import {
 import AudioMenuModal from "components/AudioMenuModal";
 import { TFile } from "obsidian";
 import { AudioInfo } from "components/Interfaces";
-// Remember to rename these classes and interfaces!
 
 interface MyPluginSettings {
 	mySetting: string;
@@ -56,74 +55,56 @@ export default class MyPlugin extends Plugin {
 		new AudioMenuModal(this.app, audioInfoArray).open();
 	};
 
-	replaceAudioMarkers(node: Node, plugin: MyPlugin) {
-		if (node.nodeType === Node.TEXT_NODE) {
-			const text = node.textContent ?? "";
-			const regex = /\[audio:([^\]@]+)@(\d+)\]/g;
-			let match;
-			let lastIndex = 0;
-			const parent = node.parentNode;
-			if (!parent) return;
-			const frag = document.createDocumentFragment();
+replaceAudioMarkers(node: Node, plugin: MyPlugin, rootEl: HTMLElement) {
+	if (node.nodeType === Node.TEXT_NODE) {
+		const text = node.textContent ?? "";
+		const regex = /\[audio:([^\]@]+)@(\d+)\]/g;
+		let match;
+		let lastIndex = 0;
+		const parent = node.parentNode;
+		if (!parent) return;
+		const frag = document.createDocumentFragment();
 
-			while ((match = regex.exec(text)) !== null) {
-				frag.appendChild(
-					document.createTextNode(
-						text.substring(lastIndex, match.index)
-					)
-				);
+		while ((match = regex.exec(text)) !== null) {
+			frag.appendChild(document.createTextNode(text.substring(lastIndex, match.index)));
 
-				const filename = match[1];
-				const time = Number(match[2]);
-				const btn = document.createElement("button"); // <-- declare btn here
-				btn.textContent = `Play ${filename} @ ${time}s`;
-				btn.onclick = () => {
-					const mdView =
-						plugin.app.workspace.getActiveViewOfType(MarkdownView);
-					if (!mdView) return;
+			const filename = match[1];
+			const time = Number(match[2]);
+			const btn = document.createElement("button");
+			btn.textContent = `Play ${filename} @ ${time}s`;
 
-					const container = mdView.contentEl;
-					const embeds =
-						container.querySelectorAll(".internal-embed");
+			// Closure explicitly captures top-level rootEl here
+			btn.onclick = () => {
+				const audios = rootEl.querySelectorAll("audio");
+				console.log("This is audios", audios);
+				console.log("This is rootEl", rootEl);
+				for (const audioEl of audios) {
+					const src = audioEl.getAttribute("src") ?? audioEl.currentSrc;
+					if (!src) continue;
 
-					for (const embed of embeds) {
-						const audioEl = embed.querySelector("audio");
-						if (!audioEl) continue;
-
-						const embedSrc =
-							embed.getAttribute("src") ||
-							embed.getAttribute("data-src");
-						if (!embedSrc) continue;
-
-						const baseName = decodeURIComponent(
-							embedSrc.split("/").pop()?.split("?")[0] ?? ""
-						);
-						if (baseName === filename) {
-							audioEl.currentTime = time;
-							audioEl.play();
-							audioEl.scrollIntoView({
-								behavior: "smooth",
-								block: "center",
-							});
-							break;
-						}
+					const baseName = decodeURIComponent(src.split("/").pop()?.split("?")[0] ?? "");
+					if (baseName === filename) {
+						audioEl.currentTime = time;
+						audioEl.play();
+						audioEl.scrollIntoView({ behavior: "smooth", block: "center" });
+						break;
 					}
-				};
+				}
+			};
 
-				frag.appendChild(btn);
-				lastIndex = regex.lastIndex;
-			}
-
-			frag.appendChild(
-				document.createTextNode(text.substring(lastIndex))
-			);
-			parent.replaceChild(frag, node);
-		} else if (node.nodeType === Node.ELEMENT_NODE) {
-			node.childNodes.forEach((child) =>
-				this.replaceAudioMarkers(child, plugin)
-			);
+			frag.appendChild(btn);
+			lastIndex = regex.lastIndex;
 		}
+
+		frag.appendChild(document.createTextNode(text.substring(lastIndex)));
+		parent.replaceChild(frag, node);
+	} else if (node.nodeType === Node.ELEMENT_NODE) {
+		// Propagate the original rootEl
+		node.childNodes.forEach((child) =>
+			this.replaceAudioMarkers(child, plugin, rootEl)
+		);
 	}
+}
 
 	async onload() {
 		await this.loadSettings();
@@ -196,8 +177,10 @@ export default class MyPlugin extends Plugin {
 			window.setInterval(() => console.log("setInterval"), 5 * 60 * 1000)
 		);
 
-		this.registerMarkdownPostProcessor((el) => {
-			this.replaceAudioMarkers(el, this);
+		this.registerMarkdownPostProcessor((el, ctx) => {
+			const rootEl = ctx.containerEl.closest(".markdown-preview-view");
+			if (!rootEl) return;
+			this.replaceAudioMarkers(el, this, rootEl);
 		});
 	}
 
