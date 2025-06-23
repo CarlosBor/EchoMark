@@ -1,29 +1,13 @@
 import {
-	App,
-	Editor,
 	MarkdownView,
-	Modal,
 	Notice,
 	Plugin,
-	PluginSettingTab,
-	Setting,
 } from "obsidian";
 import AudioMenuModal from "components/AudioMenuModal";
 import { TFile } from "obsidian";
 import { AudioInfo } from "components/Interfaces";
 
-interface MyPluginSettings {
-	mySetting: string;
-	anotherSetting: string;
-}
-
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: "deft",
-	anotherSetting: "more deft",
-};
-
 export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
 
 	getEmbeddedAudio = async () => {
 		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -41,7 +25,7 @@ export default class MyPlugin extends Plugin {
 		const matches = content.matchAll(/!\[\[(.+?)\]\]/g);
 
 		for (const match of matches) {
-			const link = match[1]; // e.g., "audio.mp3" or "folder/audio.mp3"
+			const link = match[1];
 			const tfile = this.app.metadataCache.getFirstLinkpathDest(
 				link,
 				file.path
@@ -58,8 +42,7 @@ export default class MyPlugin extends Plugin {
 replaceAudioMarkers(node: Node, plugin: MyPlugin, rootEl: HTMLElement) {
 	if (node.nodeType === Node.TEXT_NODE) {
 		const text = node.textContent ?? "";
-		const regex = /\[audio:([^\]@]+)@(\d+)\]/g;
-		let match;
+		const regex = /\[audio:([^\]@]+)@(\d+)(?:-(\d+))?\]/g;		let match;
 		let lastIndex = 0;
 		const parent = node.parentNode;
 		if (!parent) return;
@@ -70,25 +53,34 @@ replaceAudioMarkers(node: Node, plugin: MyPlugin, rootEl: HTMLElement) {
 
 			const filename = match[1];
 			const time = Number(match[2]);
+			const endTime = match[3] ? Number(match[3]) : undefined;
+
 			const btn = document.createElement("button");
 			btn.textContent = `Play ${filename} @ ${time}s`;
 
 			// Closure explicitly captures top-level rootEl here
 			btn.onclick = () => {
 				const audios = rootEl.querySelectorAll("audio");
-				console.log("This is audios", audios);
-				console.log("This is rootEl", rootEl);
 				for (const audioEl of audios) {
 					const src = audioEl.getAttribute("src") ?? audioEl.currentSrc;
 					if (!src) continue;
-
 					const baseName = decodeURIComponent(src.split("/").pop()?.split("?")[0] ?? "");
 					if (baseName === filename) {
-						audioEl.currentTime = time;
-						audioEl.play();
-						audioEl.scrollIntoView({ behavior: "smooth", block: "center" });
-						break;
+					audioEl.currentTime = time;
+					audioEl.play();
+
+					if (endTime !== undefined) {
+					const onTimeUpdate = () => {
+						if (audioEl.currentTime >= endTime) {
+							audioEl.pause();
+							audioEl.removeEventListener("timeupdate", onTimeUpdate);
+						}
+					};
+					audioEl.addEventListener("timeupdate", onTimeUpdate);
 					}
+					audioEl.scrollIntoView({ behavior: "smooth", block: "center" });
+					break;
+				}
 				}
 			};
 
@@ -107,64 +99,12 @@ replaceAudioMarkers(node: Node, plugin: MyPlugin, rootEl: HTMLElement) {
 }
 
 	async onload() {
-		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon(
+		// This creates a clickable icon in the left ribbon.
+		this.addRibbonIcon(
 			"dice",
 			"TextForButton",
-			(evt: MouseEvent) => {
-				this.getEmbeddedAudio();
-			}
+			(evt: MouseEvent) => {this.getEmbeddedAudio()}
 		);
-
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass("my-plugin-ribbon-class");
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText("This text belongs to the test plugin");
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: "open-sample-modal-simple",
-			name: "Open sample modal (simple)",
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: "sample-editor-command",
-			name: "Sample editor command",
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection("Sample Editor Command");
-			},
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: "open-sample-modal-complex",
-			name: "Open sample modal (complex)",
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			},
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
 
 		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
 		// Using this function will automatically remove the event listener when this plugin is disabled.
@@ -178,6 +118,7 @@ replaceAudioMarkers(node: Node, plugin: MyPlugin, rootEl: HTMLElement) {
 		);
 
 		this.registerMarkdownPostProcessor((el, ctx) => {
+			// @ts-ignore
 			const rootEl = ctx.containerEl.closest(".markdown-preview-view");
 			if (!rootEl) return;
 			this.replaceAudioMarkers(el, this, rootEl);
@@ -185,73 +126,4 @@ replaceAudioMarkers(node: Node, plugin: MyPlugin, rootEl: HTMLElement) {
 	}
 
 	onunload() {}
-
-	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData()
-		);
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText("Woah!");
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const { containerEl } = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName("Setting #1")
-			.setDesc("It's a secret")
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter your secret")
-					.setValue(this.plugin.settings.mySetting)
-					.onChange(async (value) => {
-						this.plugin.settings.mySetting = value;
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl)
-			.setName("Setting #2")
-			.setDesc("It's a secret")
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter your secret")
-					.setValue(this.plugin.settings.anotherSetting)
-					.onChange(async (value) => {
-						this.plugin.settings.anotherSetting = value;
-						await this.plugin.saveSettings();
-					})
-			);
-	}
 }
