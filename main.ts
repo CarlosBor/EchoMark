@@ -39,6 +39,46 @@ export default class MyPlugin extends Plugin {
 		new AudioMenuModal(this.app, audioInfoArray).open();
 	};
 
+addSegmentOverlay(audioEl: HTMLAudioElement, start: number, end?: number) {
+	const duration = audioEl.duration;
+	if (!isFinite(duration) || duration <= 0) return;
+	const overlay = document.createElement("div");
+	overlay.style.position = "absolute";
+	overlay.style.background = "rgba(255, 0, 0, 0.4)";
+	overlay.style.pointerEvents = "none";
+	overlay.style.borderRadius = "4px";
+	overlay.style.zIndex = "9999";
+
+	// Attempt to locate the seekbar input element
+	const rect = audioEl.getBoundingClientRect();
+	const seekbarLeft = rect.left + window.scrollX+130;
+	const seekbarTop = rect.top + window.scrollY + rect.height * 0.4; // Approx bottom 20%
+	const seekbarWidth = rect.width*0.685;
+
+	const startRatio = start / duration;
+	const endRatio = end !== undefined ? Math.min(end / duration, 1) : 1;
+
+	const barLeft = seekbarLeft + seekbarWidth * startRatio;
+	const barWidth = seekbarWidth * (endRatio - startRatio);
+
+	overlay.style.left = `${barLeft}px`;
+	overlay.style.top = `${seekbarTop}px`;
+	overlay.style.width = `${barWidth}px`;
+	overlay.style.height = `${rect.height*0.2}px`;
+
+	document.body.appendChild(overlay);
+
+	const removeOverlay = () => {
+		overlay.remove();
+		audioEl.removeEventListener("pause", removeOverlay);
+		audioEl.removeEventListener("ended", removeOverlay);
+	};
+
+	audioEl.addEventListener("pause", removeOverlay);
+	audioEl.addEventListener("ended", removeOverlay);
+}
+
+
 replaceAudioMarkers(node: Node, plugin: MyPlugin, rootEl: HTMLElement) {
 	if (node.nodeType === Node.TEXT_NODE) {
 		const text = node.textContent ?? "";
@@ -59,30 +99,49 @@ replaceAudioMarkers(node: Node, plugin: MyPlugin, rootEl: HTMLElement) {
 			btn.textContent = `Play ${filename} @ ${time}s`;
 
 			// Closure explicitly captures top-level rootEl here
-			btn.onclick = () => {
-				const audios = rootEl.querySelectorAll("audio");
-				for (const audioEl of audios) {
-					const src = audioEl.getAttribute("src") ?? audioEl.currentSrc;
-					if (!src) continue;
-					const baseName = decodeURIComponent(src.split("/").pop()?.split("?")[0] ?? "");
-					if (baseName === filename) {
-					audioEl.currentTime = time;
-					audioEl.play();
+btn.onclick = () => {
+	const audios = rootEl.querySelectorAll("audio");
+	for (const audioEl of audios) {
+		const src = audioEl.getAttribute("src") ?? audioEl.currentSrc;
+		if (!src) continue;
+		const baseName = decodeURIComponent(src.split("/").pop()?.split("?")[0] ?? "");
+		if (baseName !== filename) continue;
 
-					if (endTime !== undefined) {
-					const onTimeUpdate = () => {
-						if (audioEl.currentTime >= endTime) {
-							audioEl.pause();
-							audioEl.removeEventListener("timeupdate", onTimeUpdate);
-						}
-					};
-					audioEl.addEventListener("timeupdate", onTimeUpdate);
-					}
-					audioEl.scrollIntoView({ behavior: "smooth", block: "center" });
-					break;
-				}
+		audioEl.currentTime = time;
+		audioEl.play();
+		audioEl.scrollIntoView({ behavior: "smooth", block: "center" });
+
+		// Stop at endTime if defined
+		if (endTime !== undefined) {
+			const onTimeUpdate = () => {
+				if (audioEl.currentTime >= endTime) {
+					audioEl.pause();
+					audioEl.removeEventListener("timeupdate", onTimeUpdate);
+					audioEl.removeEventListener("pause", onPause);
 				}
 			};
+			const onPause = () => {
+				audioEl.removeEventListener("timeupdate", onTimeUpdate);
+				audioEl.removeEventListener("pause", onPause);
+			};
+			audioEl.addEventListener("timeupdate", onTimeUpdate);
+			audioEl.addEventListener("pause", onPause);
+		}
+
+		// Wait for metadata to load if needed
+		if (audioEl.readyState < 1) {
+			audioEl.addEventListener("loadedmetadata", () => {
+				this.addSegmentOverlay(audioEl, time, endTime);
+			}, { once: true });
+		} else {
+			this.addSegmentOverlay(audioEl, time, endTime);
+		}
+
+		break;
+	}
+};
+
+
 
 			frag.appendChild(btn);
 			lastIndex = regex.lastIndex;
